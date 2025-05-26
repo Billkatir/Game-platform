@@ -1,0 +1,608 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>Tic Tac Toe Multiplayer</title>
+    <style>
+      body {
+        font-family: Arial, sans-serif;
+        max-width: 400px;
+        margin: 2em auto;
+      }
+      #playAgainContainer {
+        margin-top: 20px;
+        display: none;
+        text-align: center;
+      }
+      #playAgainContainer button {
+        margin: 0 10px;
+        padding: 10px 20px;
+        font-weight: bold;
+        cursor: pointer;
+      }
+
+      #board {
+        display: grid;
+        grid-template-columns: repeat(3, 100px);
+        gap: 5px;
+        margin-top: 20px;
+      }
+      .cell {
+        width: 100px;
+        height: 100px;
+        font-size: 64px;
+        text-align: center;
+        line-height: 100px; /* Ensures text is vertically centered */
+        border: 2px solid #333;
+        cursor: pointer;
+        user-select: none;
+        background-color: #f0f0f0; /* Slightly off-white background */
+      }
+      #status {
+        margin-top: 20px;
+        font-weight: bold;
+        color: #333;
+      }
+      #room-info {
+        margin-top: 10px;
+        font-weight: bold;
+        color: #555;
+      }
+      input,
+      button {
+        margin: 5px 0;
+        padding: 8px;
+        width: 100%;
+      }
+      .cell.winning-cell {
+        background-color: #d4edda; /* Light green for winning line */
+      }
+    </style>
+  </head>
+  <body>
+    <h2>Tic Tac Toe Multiplayer</h2>
+
+    <div id="lobby">
+      <button id="createRoomBtn">Create Room</button>
+      <button id="joinRoomBtn">Join Room</button>
+    </div>
+
+    <div id="playAgainContainer">
+      <button id="playAgainBtn">Play Again</button>
+      <button id="backToLobbyBtn">Back to Lobby</button>
+    </div>
+
+    <div id="roomCreation" style="display: none">
+      <h3>Create Room</h3>
+      <label>Password: <input type="password" id="createPassword" /></label>
+      <button id="createRoomConfirmBtn">Create</button>
+      <button id="cancelCreateBtn">Cancel</button>
+    </div>
+
+    <div id="roomJoin" style="display: none">
+      <h3>Join Room</h3>
+      <label>Room ID: <input type="text" id="joinRoomId" /></label>
+      <label>Password: <input type="password" id="joinPassword" /></label>
+      <button id="joinRoomConfirmBtn">Join</button>
+      <button id="cancelJoinBtn">Cancel</button>
+    </div>
+
+    <div id="gameArea" style="display: none">
+      <div id="room-info"></div>
+      <div id="board"></div>
+      <div id="status"></div>
+      <button id="resetBtn">Leave Game</button>
+    </div>
+
+    <script>
+      const token = localStorage.getItem("token"); // Ensure this token is set correctly for API authorization
+      (() => {
+        const API_BASE = "http://localhost:8000"; // IMPORTANT: Change if your backend URL is different
+
+        const lobby = document.getElementById("lobby");
+        const createRoomDiv = document.getElementById("roomCreation");
+        const joinRoomDiv = document.getElementById("roomJoin");
+        const gameArea = document.getElementById("gameArea");
+        const boardDiv = document.getElementById("board");
+        const statusDiv = document.getElementById("status");
+        const roomInfoDiv = document.getElementById("room-info");
+
+        const createRoomBtn = document.getElementById("createRoomBtn");
+        const joinRoomBtn = document.getElementById("joinRoomBtn");
+        const createRoomConfirmBtn = document.getElementById(
+          "createRoomConfirmBtn"
+        );
+        const cancelCreateBtn = document.getElementById("cancelCreateBtn");
+        const joinRoomConfirmBtn =
+          document.getElementById("joinRoomConfirmBtn");
+        const cancelJoinBtn = document.getElementById("cancelJoinBtn");
+        const resetBtn = document.getElementById("resetBtn");
+
+        let roomId = null;
+        let password = null;
+        let playerSymbol = null; // 'X' or 'O'
+        let isMyTurn = false;
+        // Board is now 2D
+        let board = [
+          ["", "", ""],
+          ["", "", ""],
+          ["", "", ""],
+        ];
+        let gameActive = false;
+        let winningLine = null; // To highlight winning cells (indices)
+
+        // Render board UI - now iterates over 2D array
+        function renderBoard() {
+          boardDiv.innerHTML = "";
+          board.forEach((row, rowIndex) => {
+            row.forEach((cell, colIndex) => {
+              const cellDiv = document.createElement("div");
+              cellDiv.className = "cell";
+              // Set innerHTML to &nbsp; for empty cells to ensure proper rendering and height
+              cellDiv.innerHTML = cell === "" ? "&nbsp;" : cell;
+
+              // Calculate 1D index for winningLine check
+              const flatIndex = rowIndex * 3 + colIndex;
+
+              // Add winning-cell class if this cell is part of the winning line
+              if (winningLine && winningLine.includes(flatIndex)) {
+                cellDiv.classList.add("winning-cell");
+              }
+
+              cellDiv.onclick = () => {
+                if (!gameActive) {
+                  alert(
+                    "Game is not active yet. Waiting for players or game to start!"
+                  );
+                  return;
+                }
+                if (!isMyTurn) {
+                  alert("It's your opponent's turn!");
+                  return;
+                }
+                if (board[rowIndex][colIndex] !== "") {
+                  alert("This cell is already taken!");
+                  return; // already taken
+                }
+                makeMove(rowIndex, colIndex); // Pass row and col
+              };
+              boardDiv.appendChild(cellDiv);
+            });
+          });
+        }
+
+        // Check for winner or draw - adapted for 2D board
+        function checkWinner(boardState) {
+          winningLine = null; // Reset winning line before check
+          const winPatterns = [
+            // Rows (flat indices)
+            [0, 1, 2],
+            [3, 4, 5],
+            [6, 7, 8],
+            // Columns (flat indices)
+            [0, 3, 6],
+            [1, 4, 7],
+            [2, 5, 8],
+            // Diagonals (flat indices)
+            [0, 4, 8],
+            [2, 4, 6],
+          ];
+
+          // Helper to get cell value from flat index
+          const getCell = (flatIdx) =>
+            boardState[Math.floor(flatIdx / 3)][flatIdx % 3];
+
+          for (const pattern of winPatterns) {
+            const [a, b, c] = pattern;
+            const valA = getCell(a);
+            const valB = getCell(b);
+            const valC = getCell(c);
+
+            if (valA && valA === valB && valB === valC) {
+              winningLine = pattern; // Store the winning line's flat indices
+              return valA; // Return 'X' or 'O'
+            }
+          }
+
+          // Check for draw: all cells filled and no winner
+          const allCellsFilled = boardState.every((row) =>
+            row.every((cell) => cell !== "")
+          );
+          if (allCellsFilled) return "draw";
+
+          return null;
+        }
+
+        // updateStatus function takes the backend's gameStatus for precise messaging
+        function updateStatus(backendGameStatus = null) {
+          const winner = checkWinner(board); // Check winner always
+
+          if (winner === "draw") {
+            statusDiv.textContent = "It's a draw!";
+            gameActive = false;
+            clearInterval(pollInterval);
+            pollInterval = null;
+            playAgainContainer.style.display = "block";
+            return;
+          }
+          if (winner) {
+            statusDiv.textContent = `Player ${winner} wins!`;
+            gameActive = false;
+            clearInterval(pollInterval);
+            pollInterval = null;
+            playAgainContainer.style.display = "block";
+            return;
+          }
+
+          // If no winner/draw, display turn or waiting messages based on backend status
+          if (backendGameStatus === "waiting") {
+            statusDiv.textContent = "Waiting for Player 2 to join...";
+            gameActive = false; // Ensure game is not active
+          } else if (backendGameStatus === "active") {
+            gameActive = true; // Ensure game is active
+            statusDiv.textContent = isMyTurn ? "Your turn" : "Opponent's turn";
+          } else {
+            // Fallback for initial state or unknown status (e.g., when not yet in a room)
+            statusDiv.textContent =
+              "Click 'Create Room' or 'Join Room' to start.";
+          }
+        }
+
+        async function createRoom() {
+          password = document.getElementById("createPassword").value.trim();
+          if (!password) {
+            alert("Please enter a password.");
+            return;
+          }
+          try {
+            const res = await fetch(API_BASE + "/games/tictactoe/create", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ password }),
+            });
+
+            if (!res.ok) {
+              const err = await res.json();
+              alert("Error: " + (err.detail || "Failed to create room"));
+              return;
+            }
+
+            const data = await res.json();
+            roomId = data.room_id;
+            playerSymbol = "X";
+            isMyTurn = true; // Player 1 (X) starts first, but will wait for P2
+            board = [
+              ["", "", ""],
+              ["", "", ""],
+              ["", "", ""],
+            ]; // Ensure clean 2D board on creation
+            gameActive = false; // Game not active until second player joins
+
+            createRoomDiv.style.display = "none";
+            showGameArea();
+            roomInfoDiv.textContent = `Room ID: ${roomId} | You are Player 1 (X)`;
+            updateStatus("waiting"); // Explicitly set status for P1 when waiting
+            renderBoard();
+            startPolling(); // Start polling to detect player 2 joining
+          } catch (e) {
+            alert("Network error: " + e.message);
+          }
+        }
+
+        async function joinRoom() {
+          const joinId = document.getElementById("joinRoomId").value.trim();
+          // .toUpperCase();
+          const joinPass = document.getElementById("joinPassword").value.trim();
+
+          if (!joinId || !joinPass) {
+            alert("Please enter Room ID and Password.");
+            return;
+          }
+
+          try {
+            const res = await fetch(API_BASE + "/games/tictactoe/join", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({ room_id: joinId, password: joinPass }),
+            });
+
+            if (!res.ok) {
+              const err = await res.json();
+              console.error("Join error response:", err);
+              alert("Error: " + (err.detail || "Failed to join room"));
+              return;
+            }
+
+            const data = await res.json();
+            console.log("Join success data:", data); // IMPORTANT: Check this data in browser console!
+
+            roomId = joinId;
+            password = joinPass;
+            playerSymbol = "O"; // Player 2 is 'O'
+
+            // Board from backend is 2D
+            board = (data.game_state && data.game_state.board) || [
+              ["", "", ""],
+              ["", "", ""],
+              ["", "", ""],
+            ];
+            isMyTurn =
+              data.game_state && data.game_state.current_turn === playerSymbol;
+            gameActive = data.game_state && data.game_state.status === "active";
+
+            joinRoomDiv.style.display = "none";
+            showGameArea();
+            roomInfoDiv.textContent = `Room ID: ${roomId} | You are Player 2 (O)`;
+
+            updateStatus(data.game_state ? data.game_state.status : null); // Update status based on received data
+            renderBoard();
+            startPolling(); // Start polling for player 1's moves
+          } catch (e) {
+            alert("Network error: " + e.message);
+          }
+        }
+
+        // makeMove now takes row and col
+        async function makeMove(row, col) {
+          if (board[row][col] !== "") return;
+          board[row][col] = playerSymbol; // Optimistically update board immediately
+          renderBoard();
+          isMyTurn = false; // It's no longer my turn after making a move
+          updateStatus(); // Update status locally to "Opponent's turn"
+
+          try {
+            const res = await fetch(API_BASE + "/games/tictactoe/make_move", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+                Authorization: `Bearer ${token}`,
+              },
+              body: JSON.stringify({
+                room_id: roomId,
+                row: row, // Send row
+                col: col, // Send col
+                player: playerSymbol, // Send player symbol
+              }),
+            });
+            if (!res.ok) {
+              const err = await res.json();
+              alert(
+                "Error making move: " + (err.detail || "Failed to make move")
+              );
+              // Revert move on failure and set turn back
+              board[row][col] = "";
+              isMyTurn = true;
+              updateStatus();
+              renderBoard();
+              return;
+            }
+            // Backend should return the new state, but for simplicity, we'll let polling handle it
+          } catch (e) {
+            alert("Network error making move: " + e.message);
+            // Revert move on network failure and set turn back
+            board[row][col] = "";
+            isMyTurn = true;
+            updateStatus();
+            renderBoard();
+          }
+        }
+
+        let pollInterval = null;
+
+        async function pollGameState() {
+          if (!roomId) return;
+          try {
+            const res = await fetch(
+              `${API_BASE}/games/tictactoe/game_state?room_id=${roomId}`,
+              {
+                headers: {
+                  Authorization: `Bearer ${token}`,
+                },
+              }
+            );
+            if (!res.ok) {
+              const err = await res.json();
+              console.warn(
+                "Polling error: ",
+                err.detail || "Failed to get game state"
+              );
+              if (res.status === 404 || res.status === 401) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+                alert(
+                  "Game room no longer exists or access denied. Returning to lobby."
+                );
+                resetBtn.click(); // Simulate leaving the game
+              }
+              return;
+            }
+            const data = await res.json();
+            // console.log("Poll data:", data); // IMPORTANT: Check this data in console frequently
+
+            const prevBoard = JSON.stringify(board); // Capture current board for comparison
+            board = data.board || board; // Update board from backend (now 2D)
+            const currentTurn = data.current_turn;
+            const gameStatus = data.status; // 'waiting', 'active', 'finished'
+
+            // Update gameActive based on backend status
+            gameActive = gameStatus === "active";
+
+            // Determine whose turn it is for this player
+            isMyTurn = playerSymbol === currentTurn;
+
+            // Clear winning line if game is still active, otherwise it's set by checkWinner
+            if (gameStatus === "active") {
+              winningLine = null;
+            }
+
+            renderBoard(); // Re-render board with latest state and potential winning line highlight
+            updateStatus(gameStatus); // Update status with backend's gameStatus
+
+            // Provide feedback if opponent just made a move AND it's now our turn
+            if (
+              gameActive &&
+              isMyTurn &&
+              JSON.stringify(prevBoard) !== JSON.stringify(board)
+            ) {
+              // This condition means board changed AND it's now our turn (so opponent played)
+              console.log("Opponent just played, your turn!");
+              // Optional: Add visual/audio cue here
+            }
+          } catch (e) {
+            console.warn("Polling network error: " + e.message);
+          }
+        }
+
+        function startPolling() {
+          if (pollInterval) clearInterval(pollInterval);
+          pollInterval = setInterval(pollGameState, 1000); // Poll every 1 second for more responsiveness
+        }
+
+        // Show game area
+        function showGameArea() {
+          gameArea.style.display = "block";
+          lobby.style.display = "none";
+        }
+
+        resetBtn.onclick = () => {
+          // Leave game, reset everything
+          roomId = null;
+          password = null;
+          playerSymbol = null;
+          isMyTurn = false;
+          board = [
+            ["", "", ""],
+            ["", "", ""],
+            ["", "", ""],
+          ]; // Reset to 2D empty board
+          gameActive = false;
+          winningLine = null; // Clear winning line
+          if (pollInterval) clearInterval(pollInterval);
+          pollInterval = null;
+
+          gameArea.style.display = "none";
+          createRoomDiv.style.display = "none";
+          joinRoomDiv.style.display = "none";
+          lobby.style.display = "block";
+
+          statusDiv.textContent = "";
+          roomInfoDiv.textContent = "";
+          updateStatus(); // Reset initial status message
+        };
+
+        createRoomBtn.onclick = () => {
+          lobby.style.display = "none";
+          createRoomDiv.style.display = "block";
+        };
+
+        cancelCreateBtn.onclick = () => {
+          createRoomDiv.style.display = "none";
+          lobby.style.display = "block";
+          document.getElementById("createPassword").value = "";
+        };
+
+        createRoomConfirmBtn.onclick = () => createRoom();
+
+        joinRoomBtn.onclick = () => {
+          lobby.style.display = "none";
+          joinRoomDiv.style.display = "block";
+        };
+
+        cancelJoinBtn.onclick = () => {
+          joinRoomDiv.style.display = "none";
+          lobby.style.display = "block";
+          document.getElementById("joinRoomId").value = "";
+          document.getElementById("joinPassword").value = "";
+        };
+
+        joinRoomConfirmBtn.onclick = () => joinRoom();
+
+        // Initial render and status update
+        renderBoard();
+        updateStatus(); // Set initial status when page loads
+      })();
+      const playAgainContainer = document.getElementById("playAgainContainer");
+      const playAgainBtn = document.getElementById("playAgainBtn");
+      const backToLobbyBtn = document.getElementById("backToLobbyBtn");
+
+      playAgainBtn.onclick = async () => {
+        if (!roomId || !password) {
+          alert("No active room to restart.");
+          return;
+        }
+        try {
+          const res = await fetch(API_BASE + "/games/tictactoe/restart", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`,
+            },
+            body: JSON.stringify({
+              room_id: roomId,
+              password: password,
+            }),
+          });
+          if (!res.ok) {
+            const err = await res.json();
+            alert("Failed to restart game: " + (err.detail || res.statusText));
+            return;
+          }
+          // Restart successful, reset local game state
+          board = [
+            ["", "", ""],
+            ["", "", ""],
+            ["", "", ""],
+          ];
+          gameActive = true;
+          isMyTurn = playerSymbol === "X"; // X always starts first
+          winningLine = null;
+
+          playAgainContainer.style.display = "none";
+          renderBoard();
+          updateStatus("active");
+
+          // Restart polling to update game state continuously
+          if (!pollInterval) {
+            startPolling();
+          }
+        } catch (e) {
+          alert("Network error: " + e.message);
+        }
+      };
+
+      backToLobbyBtn.onclick = () => {
+        // Stop polling and reset UI back to lobby
+        if (pollInterval) {
+          clearInterval(pollInterval);
+          pollInterval = null;
+        }
+        gameActive = false;
+        winningLine = null;
+        board = [
+          ["", "", ""],
+          ["", "", ""],
+          ["", "", ""],
+        ];
+        roomId = null;
+        password = null;
+        playerSymbol = null;
+        isMyTurn = false;
+
+        playAgainContainer.style.display = "none";
+        gameArea.style.display = "none";
+        lobby.style.display = "block";
+        createRoomDiv.style.display = "none";
+        joinRoomDiv.style.display = "none";
+        roomInfoDiv.textContent = "";
+        statusDiv.textContent = "";
+        boardDiv.innerHTML = "";
+      };
+    </script>
+  </body>
+</html>

@@ -1,3 +1,4 @@
+# schemas/tictactoe.py
 from pydantic import BaseModel
 from typing import List, Optional, Literal
 
@@ -15,7 +16,7 @@ class JoinRoomRequest(BaseModel):
 class GameState(BaseModel):
     board: List[List[Optional[Literal["X", "O", ""]]]]  # 3x3 matrix
     current_turn: Literal["X", "O"]
-    status: Literal["waiting", "in_progress", "finished"]
+    status: Literal["waiting", "in_progress", "finished", "active"] # <--- ADD "active" HERE
     winner: Optional[Literal["X", "O", "draw", None]] = None
 
 class JoinRoomResponse(BaseModel):
@@ -23,7 +24,7 @@ class JoinRoomResponse(BaseModel):
     game_state: GameState
 
 class GetGameStateResponse(GameState):
-    pass  # same fields as GameState
+    pass
 
 class MakeMoveRequest(BaseModel):
     room_id: str

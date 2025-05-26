@@ -7,3 +7,4 @@ python-jose[cryptography]
 email-validator
 python-multipart
 passlib[bcrypt]
+fastapi[all]
