@@ -1,57 +1,51 @@
-from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
-from fastapi.security import OAuth2PasswordRequestForm
-from database import SessionLocal
+from fastapi import APIRouter, HTTPException, Depends
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from business.auth_operations import create_access_token
 from models.user import User
-from schemas.user import UserCreate, UserOut, UserLogin
-from utils.auth import hash_password, verify_password, create_access_token, get_current_user
-from fastapi.security import OAuth2PasswordRequestForm
+from sqlmodel import Field, Session, select
+from business.database_operations import get_postgresql_session
+from pydantic import BaseModel
+from datetime import timedelta
 
-router = APIRouter(
-    prefix="/auth",
-    tags=["Authentication"]
-)
 
-# Dependency to get DB session
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+router = APIRouter()
 
-@router.post("/register", response_model=UserOut)
-def register(user: UserCreate, db: Session = Depends(get_db)):
-    existing_user = db.query(User).filter(
-        (User.username == user.username) | (User.email == user.email)
-    ).first()
+# Schema for user creation
+class CreateUserRequest(BaseModel):
+    username: str
+    password: str
+
+# Endpoint for creating a user
+@router.post("/register")
+def create_user(request: CreateUserRequest, session: Session = Depends(get_postgresql_session)):
+    existing_user = session.exec(select(User).where(User.username == request.username)).first()
     if existing_user:
-        raise HTTPException(status_code=400, detail="User already exists")
+        raise HTTPException(status_code=400, detail="Username already exists")
 
     new_user = User(
-        username=user.username,
-        email=user.email,
-        hashed_password=hash_password(user.password)
+        username=request.username,
+        password=User.hash_password(request.password),
     )
-    db.add(new_user)
-    db.commit()
-    db.refresh(new_user)
-    return new_user
+    session.add(new_user)
+    session.commit()
 
+    return {"message": "User created successfully", "user_id": str(new_user.id)}
+
+# Schema for login 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    
+# Endpoint for user login
 @router.post("/login")
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.username == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid credentials"
-        )
-    access_token = create_access_token(data={"sub": user.username})
+def login(form_data: OAuth2PasswordRequestForm = Depends(), session: Session = Depends(get_postgresql_session)):
+    user = session.exec(select(User).where(User.username == form_data.username)).first()
+    if not user or not user.verify_password(form_data.password):
+        raise HTTPException(status_code=401, detail="Invalid credentials")
+
+    access_token_expires = timedelta(minutes=30)
+    access_token = create_access_token(
+        data={"sub": user.username}, expires_delta=access_token_expires
+    )
+
     return {"access_token": access_token, "token_type": "bearer"}
-
-
-@router.get("/time")
-def get_time(current_user = Depends(get_current_user)):
-    now = datetime.utcnow()
-    return {"current_time_utc": now.isoformat()}
