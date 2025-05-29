@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
-from routers import auth, lobby # Assuming 'lobby' is where your game/room routers are
+from routers import auth, lobby, tictactoe
 from business.database_operations import create_postgresql_tables
 import os
 
@@ -60,3 +60,4 @@ app.mount("/static", StaticFiles(directory=frontend_dir), name="static")
 
 app.include_router(auth.router)
 app.include_router(lobby.router)
+app.include_router(tictactoe.router)
