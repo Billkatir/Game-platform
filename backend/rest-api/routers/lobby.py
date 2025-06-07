@@ -104,10 +104,19 @@ def create_room(
             detail=f"Game '{game_name}' not found."
         )
 
+    # --- THE FIX IS HERE ---
+    # Determine the initial board size based on the game type.
+    # For Tic-Tac-Toe, it's typically 9.
+    # If your Game model has a `board_size` attribute, use that:
+    # initial_board_size = game.board_size
+    # Otherwise, hardcode for Tic-Tac-Toe if it's the only game type or if you have a default:
+    initial_board_size = 9 # Assuming Tic-Tac-Toe's 3x3 board
+
     new_room = Room(
         password=room_data.password,
         type_of_game_id=game.id,
-        created_by_id=current_user.id
+        created_by_id=current_user.id,
+        position=[0] * initial_board_size # <-- This is the crucial line added/modified
     )
 
     session.add(new_room)
@@ -317,8 +326,9 @@ def force_join_room(
         max_players = room.game.number_of_players
         current_players = len(room.users)
         
+        # Only check if room is full IF the user is not already in this room
         if current_user.room_id != room.id and current_players >= max_players:
-             raise HTTPException(
+            raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="Room is full. Cannot join."
             )
@@ -340,7 +350,7 @@ def force_join_room(
         session.commit() # Commit leaving the old room
         session.refresh(current_user)
 
-        # Refresh old room's data
+        # Refresh old room's data (after user has left)
         old_room_obj = session.get(Room, old_room_id_to_refresh)
         if old_room_obj:
             session.refresh(old_room_obj)

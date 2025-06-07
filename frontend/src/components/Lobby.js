@@ -1,426 +1,539 @@
-import React, { useEffect, useState } from "react";
+// Lobby.jsx
+import React, { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
 
 const BACKEND_URL = process.env.REACT_APP_API_URL;
 
+// --- Styles Definitions (that don't depend on component state) ---
+const commonButtonStyles = {
+  backgroundColor: "#007bff",
+  color: "white",
+  border: "none",
+  borderRadius: "5px",
+  padding: "8px 16px",
+  cursor: "pointer",
+  fontWeight: "600",
+  margin: "5px",
+  transition: "background-color 0.2s ease-in-out",
+};
+
+const successButtonStyles = {
+  ...commonButtonStyles, // Inherit common styles
+  backgroundColor: "#28a745", // Green color for success
+};
+
+const secondaryButtonStyles = {
+  ...commonButtonStyles,
+  backgroundColor: "#6c757d",
+};
+
+const warningButtonStyles = {
+  ...commonButtonStyles,
+  backgroundColor: "#ffc107",
+  color: "#343a40",
+};
+
+const dangerButtonStyles = {
+  ...commonButtonStyles,
+  backgroundColor: "#dc3545",
+};
+
+const containerStyle = {
+  maxWidth: "800px",
+  margin: "40px auto",
+  padding: "30px",
+  backgroundColor: "#f9f9f9",
+  borderRadius: "10px",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.1)",
+  fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
+  color: "#333",
+  textAlign: "center",
+};
+
+const listContainerStyle = {
+  display: "flex",
+  justifyContent: "space-around",
+  marginTop: "20px",
+  flexWrap: "wrap",
+};
+
+const listColumnStyle = {
+  flex: "1",
+  minWidth: "300px",
+  margin: "10px",
+  padding: "20px",
+  border: "1px solid #e0e0e0",
+  borderRadius: "8px",
+  backgroundColor: "#fff",
+  boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
+};
+
+const listItemStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  padding: "10px 0",
+  borderBottom: "1px dashed #e9ecef",
+};
+
+const lastListItemStyle = {
+  ...listItemStyle,
+  borderBottom: "none",
+};
+
+const inputStyle = {
+  padding: "8px",
+  margin: "10px 0",
+  borderRadius: "5px",
+  border: "1px solid #ccc",
+  width: "calc(100% - 22px)", // Adjust for padding/border
+};
+
+const dialogOverlayStyle = {
+  position: "fixed",
+  top: 0,
+  left: 0,
+  right: 0,
+  bottom: 0,
+  backgroundColor: "rgba(0, 0, 0, 0.5)",
+  display: "flex",
+  justifyContent: "center",
+  alignItems: "center",
+  zIndex: 1000,
+};
+
+const dialogContentStyle = {
+  backgroundColor: "white",
+  padding: "30px",
+  borderRadius: "8px",
+  boxShadow: "0 4px 20px rgba(0,0,0,0.2)",
+  maxWidth: "400px",
+  width: "90%",
+  textAlign: "center",
+};
+// --- End Styles Definitions ---
+
 export default function Lobby() {
   const [games, setGames] = useState([]);
-  const [expandedGameId, setExpandedGameId] = useState(null);
   const [rooms, setRooms] = useState([]);
-  const [myRoom, setMyRoom] = useState(null);
-  const [creatingRoomPassword, setCreatingRoomPassword] = useState("");
-  const [joinPasswords, setJoinPasswords] = useState({});
-  const [loadingRooms, setLoadingRooms] = useState(false);
-  const [message, setMessage] = useState("");
-  const [roomCounts, setRoomCounts] = useState({});
-  // NEW STATE: To store the dynamically fetched user count for *my* room
-  const [myRoomUserCount, setMyRoomUserCount] = useState({
-    user_count: 0,
-    max_players: 0,
-  });
+  const [selectedGame, setSelectedGame] = useState(null);
+  const [message, setMessage] = useState(""); // <-- message state declared here
+  const [showPasswordInput, setShowPasswordInput] = useState(false);
+  const [roomPassword, setRoomPassword] = useState("");
+  const [roomToJoinId, setRoomToJoinId] = useState(null);
+  const [confirmForceJoin, setConfirmForceJoin] = useState(false);
+  const [pendingForceJoinRoomId, setPendingForceJoinRoomId] = useState(null);
+  const [pendingForceJoinPassword, setPendingForceJoinPassword] = useState("");
 
+  const navigate = useNavigate();
   const token = localStorage.getItem("authToken");
-  const authHeaders = {
-    "Content-Type": "application/json",
-    Accept: "application/json",
-    "Cache-Control": "no-cache",
-    Authorization: `Bearer ${token}`,
+
+  // --- MOVE messageStyle HERE, AFTER message IS DECLARED ---
+  const messageStyle = {
+    backgroundColor:
+      message.includes("Error") || message.includes("Failed")
+        ? "#ffe0e0"
+        : "#e0f7fa",
+    padding: "10px",
+    borderRadius: "5px",
+    color:
+      message.includes("Error") || message.includes("Failed")
+        ? "#cc0000"
+        : "#005662",
+    marginBottom: "20px",
+    marginTop: "10px",
   };
+  // --- END MOVE ---
 
-  useEffect(() => {
-    fetch(`${BACKEND_URL}/available_games`, { headers: authHeaders })
-      .then((res) => res.json())
-      .then(setGames)
-      .catch(() => setMessage("Failed to load games."));
-  }, []);
-
-  useEffect(() => {
-    if (!expandedGameId) {
-      setRooms([]);
-      setRoomCounts({});
+  const fetchAvailableGames = useCallback(async () => {
+    if (!token) {
+      setMessage("Authentication token missing. Please log in.");
+      navigate("/login");
       return;
     }
-    const selectedGame = games.find((g) => g.id === expandedGameId);
-    if (!selectedGame) return;
+    try {
+      const response = await fetch(`${BACKEND_URL}/available_games`, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setGames(data);
+    } catch (error) {
+      console.error("Error fetching available games:", error);
+      setMessage("Failed to load available games. Please try again.");
+    }
+  }, [token, navigate]);
 
-    setLoadingRooms(true);
-    fetch(`${BACKEND_URL}/available_rooms/${selectedGame.name}`, {
-      headers: authHeaders,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to load rooms");
-        return res.json();
-      })
-      .then(async (data) => {
-        setRooms(Array.isArray(data) ? data : []);
-        setLoadingRooms(false);
-
-        const newRoomCounts = {};
-        const fetchPromises = (Array.isArray(data) ? data : []).map(
-          async (room) => {
-            try {
-              const countRes = await fetch(
-                `${BACKEND_URL}/user_count/${room.id}`,
-                { headers: authHeaders }
-              );
-              if (countRes.ok) {
-                const countData = await countRes.json();
-                newRoomCounts[room.id] = {
-                  user_count: countData.user_count,
-                  max_players: countData.max_players,
-                };
-              } else {
-                console.warn(
-                  `Failed to fetch user count for room ${room.id}:`,
-                  countRes.status
-                );
-                newRoomCounts[room.id] = {
-                  user_count: 0,
-                  max_players: room.game?.number_of_players || 0,
-                };
-              }
-            } catch (error) {
-              console.error(
-                `Error fetching user count for room ${room.id}:`,
-                error
-              );
-              newRoomCounts[room.id] = {
-                user_count: 0,
-                max_players: room.game?.number_of_players || 0,
-              };
-            }
+  const fetchAvailableRooms = useCallback(
+    async (gameName) => {
+      if (!token) return;
+      try {
+        const response = await fetch(
+          `${BACKEND_URL}/available_rooms/${gameName}`,
+          {
+            headers: {
+              Authorization: `Bearer ${token}`,
+            },
           }
         );
-
-        await Promise.all(fetchPromises);
-        setRoomCounts(newRoomCounts);
-      })
-      .catch(() => {
-        setMessage("Failed to load rooms.");
-        setLoadingRooms(false);
-      });
-  }, [expandedGameId, games]);
-
-  const fetchMyRoom = () => {
-    fetch(`${BACKEND_URL}/my_room`, { headers: authHeaders })
-      .then((res) => (res.ok ? res.json() : null))
-      .then(setMyRoom)
-      .catch(() => setMyRoom(null));
-  };
+        if (!response.ok) {
+          throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        const data = await response.json();
+        setRooms(data);
+      } catch (error) {
+        console.error(`Error fetching rooms for ${gameName}:`, error);
+        setMessage(`Failed to load rooms for ${gameName}.`);
+      }
+    },
+    [token]
+  );
 
   useEffect(() => {
-    fetchMyRoom();
-  }, []);
-
-  // NEW useEffect: Fetch user count for myRoom when myRoom state changes
-  useEffect(() => {
-    if (myRoom && myRoom.id) {
-      fetch(`${BACKEND_URL}/user_count/${myRoom.id}`, { headers: authHeaders })
-        .then((res) => res.json())
-        .then((data) => {
-          if (data.user_count !== undefined) {
-            setMyRoomUserCount({
-              user_count: data.user_count,
-              max_players:
-                data.max_players || myRoom.game?.number_of_players || 0,
-            });
-          }
-        })
-        .catch((error) => {
-          console.error("Error fetching my room user count:", error);
-          setMyRoomUserCount({
-            user_count: 0,
-            max_players: myRoom.game?.number_of_players || 0,
-          });
-        });
-    } else {
-      setMyRoomUserCount({ user_count: 0, max_players: 0 }); // Reset if not in a room
+    fetchAvailableGames();
+    // Poll for room updates for the selected game every 5 seconds
+    let roomPollingInterval;
+    if (selectedGame) {
+      roomPollingInterval = setInterval(() => {
+        fetchAvailableRooms(selectedGame.name);
+      }, 5000);
     }
-  }, [myRoom, authHeaders]); // Depend on myRoom and authHeaders
 
-  const createRoom = () => {
-    if (!expandedGameId) {
-      setMessage("Select a game first.");
+    return () => {
+      if (roomPollingInterval) {
+        clearInterval(roomPollingInterval);
+      }
+    };
+  }, [fetchAvailableGames, fetchAvailableRooms, selectedGame]);
+
+  const handleCreateRoom = async () => {
+    if (!token || !selectedGame) {
+      setMessage("Please select a game to create a room.");
       return;
     }
-    const selectedGame = games.find((g) => g.id === expandedGameId);
-    if (!selectedGame) return;
-
-    fetch(`${BACKEND_URL}/create_room/${selectedGame.name}`, {
-      method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify({ password: creatingRoomPassword || null }),
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to create room");
-        return res.json();
-      })
-      .then((room) => {
-        setMessage(`Room created! ID: ${room.id}`);
-        setCreatingRoomPassword("");
-        fetchMyRoom();
-      })
-      .catch(() => setMessage("Failed to create room."));
-  };
-
-  const joinRoom = (roomId) => {
-    fetch(`${BACKEND_URL}/join_room/${roomId}`, {
-      method: "POST",
-      headers: authHeaders,
-      body: JSON.stringify({ password: joinPasswords[roomId] || null }),
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.detail || "Failed to join room");
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/create_room/${selectedGame.name}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ password: roomPassword || null }),
         }
-        return res.json();
-      })
-      .then((room) => {
-        setMessage(`Joined room ID: ${room.id}`);
-        setJoinPasswords((prev) => ({ ...prev, [roomId]: "" }));
-        fetchMyRoom();
-      })
-      .catch((e) => setMessage(e.message));
+      );
+
+      if (response.status === 409) {
+        // Conflict means user is already in a room
+        setMessage("You are currently in another room. Please leave it first.");
+        return;
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.detail || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const newRoom = await response.json();
+      setMessage(`Room ${newRoom.id} created successfully! Joining...`);
+      navigate(`/game/${newRoom.id}`); // Navigate directly to the game room
+    } catch (error) {
+      console.error("Error creating room:", error);
+      setMessage(`Failed to create room: ${error.message}`);
+    }
   };
 
-  const leaveRoom = () => {
-    fetch(`${BACKEND_URL}/leave_room`, {
-      method: "POST",
-      headers: authHeaders,
-    })
-      .then((res) => {
-        if (!res.ok) throw new Error("Failed to leave room");
-        return res.json();
-      })
-      .then(() => {
-        setMessage("Left the room.");
-        fetchMyRoom();
-      })
-      .catch(() => setMessage("Failed to leave room."));
+  const handleJoinRoom = async (roomId, password) => {
+    if (!token) {
+      setMessage("Authentication token missing. Please log in.");
+      navigate("/login");
+      return;
+    }
+    try {
+      const response = await fetch(`${BACKEND_URL}/join_room/${roomId}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ password: password || null }),
+      });
+
+      if (response.status === 409) {
+        const errorData = await response.json();
+        if (
+          errorData.detail &&
+          errorData.detail.includes("You are currently in another room")
+        ) {
+          setConfirmForceJoin(true);
+          setPendingForceJoinRoomId(roomId);
+          setPendingForceJoinPassword(password);
+          setMessage(errorData.detail); // Display the confirmation message
+          return;
+        } else {
+          throw new Error(
+            errorData.detail || `HTTP error! status: ${response.status}`
+          );
+        }
+      }
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.detail || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const joinedRoom = await response.json();
+      setMessage(`Joined room ${joinedRoom.id} successfully!`);
+      navigate(`/game/${joinedRoom.id}`);
+    } catch (error) {
+      console.error("Error joining room:", error);
+      setMessage(`Failed to join room: ${error.message}`);
+    } finally {
+      // Reset password input and dialog state after attempt
+      setShowPasswordInput(false);
+      setRoomPassword("");
+      setRoomToJoinId(null);
+    }
+  };
+
+  const handleForceJoinRoom = async () => {
+    if (!token || pendingForceJoinRoomId === null) return;
+
+    try {
+      const response = await fetch(
+        `${BACKEND_URL}/force_join_room/${pendingForceJoinRoomId}`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ password: pendingForceJoinPassword || null }),
+        }
+      );
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.detail || `HTTP error! status: ${response.status}`
+        );
+      }
+
+      const joinedRoom = await response.json();
+      setMessage(`Force joined room ${joinedRoom.id} successfully!`);
+      navigate(`/game/${joinedRoom.id}`);
+    } catch (error) {
+      console.error("Error force joining room:", error);
+      setMessage(`Failed to force join room: ${error.message}`);
+    } finally {
+      setConfirmForceJoin(false);
+      setPendingForceJoinRoomId(null);
+      setPendingForceJoinPassword("");
+      setShowPasswordInput(false);
+      setRoomPassword("");
+    }
+  };
+
+  const handleSelectGame = (game) => {
+    setSelectedGame(game);
+    setRooms([]); // Clear rooms when selecting a new game
+    setMessage("");
+    fetchAvailableRooms(game.name); // Fetch rooms for the selected game
+  };
+
+  const handleShowPasswordPrompt = (roomId) => {
+    setRoomToJoinId(roomId);
+    setShowPasswordInput(true);
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem("authToken");
+    navigate("/login");
   };
 
   return (
-    <div
-      style={{
-        maxWidth: 700,
-        margin: "auto",
-        padding: 20,
-        fontFamily: "'Segoe UI', Tahoma, Geneva, Verdana, sans-serif",
-        color: "#222",
-      }}
-    >
-      <h2 style={{ textAlign: "center" }}>Lobby</h2>
-      {message && (
-        <p
-          style={{
-            backgroundColor: "#ffdddd",
-            padding: 10,
-            borderRadius: 5,
-            color: "#a00",
-          }}
-        >
-          {message}
-        </p>
-      )}
+    <div style={containerStyle}>
+      <h2 style={{ color: "#007bff" }}>Game Lobby</h2>
 
-      <section>
-        <h3>Available Games</h3>
-        <div
-          style={{
-            display: "flex",
-            flexWrap: "wrap",
-            gap: 12,
-            marginBottom: 20,
-          }}
-        >
-          {games.map((game) => (
-            <button
-              key={game.id}
-              onClick={() =>
-                setExpandedGameId((id) => (id === game.id ? null : game.id))
-              }
-              style={{
-                padding: "10px 20px",
-                borderRadius: 8,
-                border:
-                  expandedGameId === game.id
-                    ? "2px solid #007bff"
-                    : "2px solid #ccc",
-                backgroundColor:
-                  expandedGameId === game.id ? "#cce5ff" : "white",
-                cursor: "pointer",
-                fontWeight: "600",
-                minWidth: 120,
-                transition: "background-color 0.3s, border-color 0.3s",
-              }}
-            >
-              {game.name}
+      {message && <p style={messageStyle}>{message}</p>}
+
+      {/* Force Join Confirmation Dialog */}
+      {confirmForceJoin && (
+        <div style={dialogOverlayStyle}>
+          <div style={dialogContentStyle}>
+            <h3>Leave Current Room?</h3>
+            <p>{message}</p> {/* Re-display the backend message */}
+            <button onClick={handleForceJoinRoom} style={dangerButtonStyles}>
+              Yes, Leave and Join
             </button>
-          ))}
-        </div>
-      </section>
-
-      {expandedGameId && (
-        <section
-          style={{
-            padding: 20,
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            marginBottom: 40,
-            backgroundColor: "#f9f9f9",
-          }}
-        >
-          <h3>
-            Rooms for{" "}
-            {games.find((g) => g.id === expandedGameId)?.name ||
-              "Selected Game"}
-          </h3>
-
-          {loadingRooms ? (
-            <p>Loading rooms...</p>
-          ) : !Array.isArray(rooms) || rooms.length === 0 ? (
-            <p>No rooms available.</p>
-          ) : (
-            <ul style={{ listStyleType: "none", paddingLeft: 0 }}>
-              {rooms.map((room) => {
-                const playerCount = roomCounts[room.id]?.user_count || 0;
-                const maxPlayers =
-                  roomCounts[room.id]?.max_players ||
-                  games.find((g) => g.id === expandedGameId)
-                    ?.number_of_players ||
-                  0;
-
-                return (
-                  <li
-                    key={room.id}
-                    style={{
-                      padding: 12,
-                      borderBottom: "1px solid #ddd",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      flexWrap: "wrap",
-                    }}
-                  >
-                    <div>
-                      <strong>Room ID:</strong> {room.id} |{" "}
-                      <strong>Players:</strong> {playerCount}/{maxPlayers}{" "}
-                      {room.password ? "🔒" : "🔓"}
-                    </div>
-                    <div style={{ marginTop: 8, display: "flex", gap: 8 }}>
-                      <input
-                        type="password"
-                        placeholder="Password"
-                        value={joinPasswords[room.id] || ""}
-                        onChange={(e) =>
-                          setJoinPasswords((prev) => ({
-                            ...prev,
-                            [room.id]: e.target.value,
-                          }))
-                        }
-                        style={{
-                          padding: "6px 10px",
-                          borderRadius: 4,
-                          border: "1px solid #ccc",
-                          minWidth: 120,
-                        }}
-                      />
-                      <button
-                        onClick={() => joinRoom(room.id)}
-                        style={{
-                          backgroundColor: "#007bff",
-                          color: "white",
-                          border: "none",
-                          borderRadius: 5,
-                          padding: "7px 15px",
-                          cursor: "pointer",
-                          fontWeight: "600",
-                        }}
-                      >
-                        Join Room
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-
-          <div
-            style={{
-              marginTop: 20,
-              paddingTop: 10,
-              borderTop: "1px solid #ccc",
-              display: "flex",
-              gap: 12,
-              flexWrap: "wrap",
-              alignItems: "center",
-            }}
-          >
-            <input
-              type="password"
-              placeholder="Room Password (optional)"
-              value={creatingRoomPassword}
-              onChange={(e) => setCreatingRoomPassword(e.target.value)}
-              style={{
-                flexGrow: 1,
-                padding: "8px 12px",
-                borderRadius: 6,
-                border: "1px solid #ccc",
-                minWidth: 200,
-              }}
-            />
             <button
-              onClick={createRoom}
-              style={{
-                backgroundColor: "#28a745",
-                color: "white",
-                border: "none",
-                borderRadius: 6,
-                padding: "10px 20px",
-                fontWeight: "700",
-                cursor: "pointer",
-                minWidth: 120,
+              onClick={() => {
+                setConfirmForceJoin(false);
+                setPendingForceJoinRoomId(null);
+                setPendingForceJoinPassword("");
+                setMessage(""); // Clear the message
               }}
+              style={secondaryButtonStyles}
             >
-              Create Room
+              No, Stay Here
             </button>
           </div>
-        </section>
+        </div>
       )}
 
-      {myRoom && (
-        <section
-          style={{
-            padding: 20,
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            backgroundColor: "#fff3cd",
-          }}
-        >
-          <h3>Your Current Room</h3>
-          <p>
-            <strong>Room ID:</strong> {myRoom.id} | <strong>Game:</strong>{" "}
-            {myRoom.game?.name} | <strong>Players:</strong>{" "}
-            {/* USE myRoomUserCount HERE */}
-            {myRoomUserCount.user_count}/{myRoomUserCount.max_players}
-          </p>
-          <button
-            onClick={leaveRoom}
-            style={{
-              backgroundColor: "#dc3545",
-              color: "white",
-              border: "none",
-              borderRadius: 6,
-              padding: "10px 20px",
-              fontWeight: "700",
-              cursor: "pointer",
-            }}
-          >
-            Leave Room
-          </button>
-        </section>
-      )}
+      <div style={listContainerStyle}>
+        <div style={listColumnStyle}>
+          <h3 style={{ color: "#28a745" }}>Available Games</h3>
+          {games.length === 0 ? (
+            <p>No games available.</p>
+          ) : (
+            <ul>
+              {games.map((game) => (
+                <li key={game.id} style={listItemStyle}>
+                  <span>{game.name}</span>
+                  <button
+                    onClick={() => handleSelectGame(game)}
+                    style={
+                      selectedGame && selectedGame.id === game.id
+                        ? secondaryButtonStyles
+                        : commonButtonStyles
+                    }
+                    disabled={selectedGame && selectedGame.id === game.id}
+                  >
+                    {selectedGame && selectedGame.id === game.id
+                      ? "Selected"
+                      : "Select"}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div style={listColumnStyle}>
+          <h3 style={{ color: "#17a2b8" }}>
+            Rooms for {selectedGame ? selectedGame.name : "..."}
+          </h3>
+          {selectedGame ? (
+            <>
+              {rooms.length === 0 ? (
+                <p>No rooms available for {selectedGame.name}. Create one!</p>
+              ) : (
+                <ul>
+                  {rooms.map((room, index) => (
+                    <li
+                      key={room.id}
+                      style={
+                        index === rooms.length - 1
+                          ? lastListItemStyle
+                          : listItemStyle
+                      }
+                    >
+                      <span>
+                        Room #{room.id} ({room.password ? "Private" : "Public"})
+                        - Players: {room.users ? room.users.length : 0}/
+                        {room.game ? room.game.number_of_players : "?"}
+                      </span>
+                      <button
+                        onClick={() => handleShowPasswordPrompt(room.id)}
+                        style={commonButtonStyles}
+                        disabled={
+                          !room.available &&
+                          (!room.users ||
+                            room.users.length ===
+                              (room.game ? room.game.number_of_players : 0))
+                        }
+                      >
+                        {!room.available &&
+                        room.users &&
+                        room.users.length ===
+                          (room.game ? room.game.number_of_players : 0)
+                          ? "Full"
+                          : "Join"}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+              <div style={{ marginTop: "20px" }}>
+                <h4>Create New Room</h4>
+                {showPasswordInput &&
+                  roomToJoinId === null && ( // Show password input for creation
+                    <input
+                      type="password"
+                      placeholder="Set password (optional)"
+                      value={roomPassword}
+                      onChange={(e) => setRoomPassword(e.target.value)}
+                      style={inputStyle}
+                    />
+                  )}
+                {showPasswordInput &&
+                  roomToJoinId && ( // Show password input for joining a specific room
+                    <input
+                      type="password"
+                      placeholder="Enter password"
+                      value={roomPassword}
+                      onChange={(e) => setRoomPassword(e.target.value)}
+                      style={inputStyle}
+                    />
+                  )}
+                {roomToJoinId ? (
+                  <>
+                    <button
+                      onClick={() => handleJoinRoom(roomToJoinId, roomPassword)}
+                      style={commonButtonStyles}
+                    >
+                      Confirm Join
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowPasswordInput(false);
+                        setRoomPassword("");
+                        setRoomToJoinId(null);
+                      }}
+                      style={secondaryButtonStyles}
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      onClick={handleCreateRoom}
+                      style={successButtonStyles}
+                    >
+                      Create Room
+                    </button>
+                    <button
+                      onClick={() => setShowPasswordInput(!showPasswordInput)}
+                      style={secondaryButtonStyles}
+                    >
+                      {showPasswordInput
+                        ? "Hide Password Option"
+                        : "Show Password Option"}
+                    </button>
+                  </>
+                )}
+              </div>
+            </>
+          ) : (
+            <p>Select a game to see available rooms.</p>
+          )}
+        </div>
+      </div>
+      <hr style={{ margin: "30px 0", borderColor: "#eee" }} />
+      <button onClick={handleLogout} style={dangerButtonStyles}>
+        Logout
+      </button>
     </div>
   );
 }
